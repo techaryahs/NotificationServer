@@ -1,27 +1,36 @@
 const admin = require("firebase-admin");
 const express = require("express");
 const fs = require("fs");
-const path = require("path");
-require('dotenv').config();
+require("dotenv").config();
 
 const app = express();
 app.use(express.json());
 
-// Initialize Firebase Admin SDK
+/* ----------------------------------------------------
+   Initialize Firebase Admin SDK
+---------------------------------------------------- */
+
 let serviceAccount;
+
 try {
-  // Check if running on Render (production)
-  if (fs.existsSync('/etc/secrets/firebase-admin-key.json')) {
-    serviceAccount = require('/etc/secrets/firebase-admin-key.json');
-    console.log('Using Firebase credentials from /etc/secrets/');
+
+  if (fs.existsSync("/etc/secrets/firebase-admin-key.json")) {
+
+    serviceAccount = require("/etc/secrets/firebase-admin-key.json");
+    console.log("Using Firebase credentials from /etc/secrets/");
+
   } else {
-    // Local development
-    serviceAccount = require('./firebase-admin-key.json');
-    console.log('Using local Firebase credentials');
+
+    serviceAccount = require("./firebase-admin-key.json");
+    console.log("Using local Firebase credentials");
+
   }
+
 } catch (error) {
-  console.error('Error loading Firebase credentials:', error);
+
+  console.error("Error loading Firebase credentials:", error);
   process.exit(1);
+
 }
 
 admin.initializeApp({
@@ -29,55 +38,118 @@ admin.initializeApp({
   databaseURL: process.env.FIREBASE_DATABASE_URL
 });
 
+/* ----------------------------------------------------
+   Send Notification API
+---------------------------------------------------- */
 
 app.post("/send", async (req, res) => {
+
   const { title, body } = req.body;
 
+  if (!title || !body) {
+    return res.status(400).send({
+      success: false,
+      error: "Title and body are required"
+    });
+  }
+
   try {
-    const tokensSnapshot = await admin.database().ref('user_tokens').once('value');
-    const tokensData = tokensSnapshot.val();
+
+    /* Fetch tokens from database */
+
+    const snapshot = await admin
+      .database()
+      .ref("salonandspa/user_tokens")
+      .once("value");
+
+    const tokensData = snapshot.val();
 
     if (!tokensData) {
-      return res.status(400).send({ success: false, error: "No tokens found in database." });
+      return res.status(400).send({
+        success: false,
+        error: "No tokens found in database"
+      });
     }
 
     const tokens = [];
 
-    Object.values(tokensData).forEach(user => {
-      if (user.token) {
-        tokens.push(user.token);
+    Object.values(tokensData).forEach(device => {
+
+      if (device.token) {
+        tokens.push(device.token);
       }
+
     });
 
-    console.log(`Sending notification to ${tokens.length} tokens`);
+    console.log(`Sending notification to ${tokens.length} devices`);
 
-    const successfulSends = [];
-    const failedSends = [];
-
-    for (const token of tokens) {
-      const message = {
-        notification: { title, body },
-        token,
-      };
-
-      try {
-        const response = await admin.messaging().send(message);
-        successfulSends.push(response);
-      } catch (err) {
-        failedSends.push({ token, error: err.message });
-      }
+    if (tokens.length === 0) {
+      return res.status(400).send({
+        success: false,
+        error: "No valid tokens found"
+      });
     }
+
+    /* Notification payload */
+
+    const message = {
+
+      tokens: tokens,
+
+      notification: {
+        title: title,
+        body: body
+      },
+
+      android: {
+        priority: "high"
+      },
+
+      apns: {
+        payload: {
+          aps: {
+            sound: "default",
+            badge: 1
+          }
+        }
+      }
+
+    };
+
+    /* Send notifications */
+
+    const response = await admin
+      .messaging()
+      .sendEachForMulticast(message);
+
+    console.log("Success:", response.successCount);
+    console.log("Failure:", response.failureCount);
 
     res.send({
       success: true,
-      successCount: successfulSends.length,
-      failureCount: failedSends.length
+      successCount: response.successCount,
+      failureCount: response.failureCount
     });
 
-  } catch (err) {
-    res.status(500).send({ success: false, error: err.message });
+  } catch (error) {
+
+    console.error("Error sending notification:", error);
+
+    res.status(500).send({
+      success: false,
+      error: error.message
+    });
+
   }
+
 });
 
+/* ----------------------------------------------------
+   Start Server
+---------------------------------------------------- */
+
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`FCM server running on port ${PORT}`));
+
+app.listen(PORT, () => {
+  console.log(`FCM server running on port ${PORT}`);
+});
