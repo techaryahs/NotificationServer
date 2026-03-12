@@ -59,7 +59,7 @@ app.post("/send", async (req, res) => {
 
     const snapshot = await admin
       .database()
-      .ref("salonandspa/user_tokens")
+      .ref("user_tokens")
       .once("value");
 
     const tokensData = snapshot.val();
