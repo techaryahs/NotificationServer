@@ -44,57 +44,20 @@ admin.initializeApp({
 
 app.post("/send", async (req, res) => {
 
-  const { title, body } = req.body;
+  const { title, body, token } = req.body;
 
-  if (!title || !body) {
+  if (!token) {
     return res.status(400).send({
       success: false,
-      error: "Title and body are required"
+      error: "Token is required"
     });
   }
 
   try {
 
-    /* Fetch tokens from database */
-
-    const snapshot = await admin
-      .database()
-      .ref("user_tokens")
-      .once("value");
-
-    const tokensData = snapshot.val();
-
-    if (!tokensData) {
-      return res.status(400).send({
-        success: false,
-        error: "No tokens found in database"
-      });
-    }
-
-    const tokens = [];
-
-    Object.values(tokensData).forEach(device => {
-
-      if (device.token) {
-        tokens.push(device.token);
-      }
-
-    });
-
-    console.log(`Sending notification to ${tokens.length} devices`);
-
-    if (tokens.length === 0) {
-      return res.status(400).send({
-        success: false,
-        error: "No valid tokens found"
-      });
-    }
-
-    /* Notification payload */
-
     const message = {
 
-      tokens: tokens,
+      token: token,
 
       notification: {
         title: title,
@@ -116,24 +79,18 @@ app.post("/send", async (req, res) => {
 
     };
 
-    /* Send notifications */
+    const response = await admin.messaging().send(message);
 
-    const response = await admin
-      .messaging()
-      .sendEachForMulticast(message);
-
-    console.log("Success:", response.successCount);
-    console.log("Failure:", response.failureCount);
+    console.log("Notification sent:", response);
 
     res.send({
       success: true,
-      successCount: response.successCount,
-      failureCount: response.failureCount
+      messageId: response
     });
 
   } catch (error) {
 
-    console.error("Error sending notification:", error);
+    console.error(error);
 
     res.status(500).send({
       success: false,
