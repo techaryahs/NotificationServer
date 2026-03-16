@@ -31,51 +31,80 @@ admin.initializeApp({
 
 
 app.post("/send", async (req, res) => {
-  const { title, body } = req.body;
+  const { title, body, userId } = req.body;
 
   try {
-    const tokensSnapshot = await admin.database().ref('user_tokens').once('value');
-    const tokensData = tokensSnapshot.val();
 
-    if (!tokensData) {
-      return res.status(400).send({ success: false, error: "No tokens found in database." });
+    let tokens = [];
+
+    // 1️⃣ If userId provided → send to specific user
+    if (userId) {
+
+      const snap = await admin
+        .database()
+        .ref(`salonandspa/customer/${userId}/fcmToken`)
+        .once("value");
+
+      const token = snap.val();
+
+      if (!token) {
+        return res.status(404).send({
+          success: false,
+          error: "User token not found"
+        });
+      }
+
+      tokens.push(token);
+
+    } else {
+
+      // 2️⃣ Otherwise broadcast to all users
+      const snapshot = await admin
+        .database()
+        .ref("salonandspa/customer")
+        .once("value");
+
+      const users = snapshot.val();
+
+      if (!users) {
+        return res.status(400).send({
+          success: false,
+          error: "No users found"
+        });
+      }
+
+      Object.values(users).forEach(user => {
+        if (user.fcmToken) {
+          tokens.push(user.fcmToken);
+        }
+      });
     }
 
-    const tokens = [];
+    console.log(`Sending notification to ${tokens.length} device(s)`);
 
-    Object.values(tokensData).forEach(user => {
-      if (user.token) {
-        tokens.push(user.token);
-      }
-    });
+    const results = await Promise.allSettled(
+      tokens.map(token =>
+        admin.messaging().send({
+          token,
+          notification: { title, body }
+        })
+      )
+    );
 
-    console.log(`Sending notification to ${tokens.length} tokens`);
-
-    const successfulSends = [];
-    const failedSends = [];
-
-    for (const token of tokens) {
-      const message = {
-        notification: { title, body },
-        token,
-      };
-
-      try {
-        const response = await admin.messaging().send(message);
-        successfulSends.push(response);
-      } catch (err) {
-        failedSends.push({ token, error: err.message });
-      }
-    }
+    const successCount = results.filter(r => r.status === "fulfilled").length;
+    const failureCount = results.filter(r => r.status === "rejected").length;
 
     res.send({
       success: true,
-      successCount: successfulSends.length,
-      failureCount: failedSends.length
+      successCount,
+      failureCount
     });
 
   } catch (err) {
-    res.status(500).send({ success: false, error: err.message });
+    res.status(500).send({
+      success: false,
+      error: err.message
+    });
   }
 });
 
